@@ -5,10 +5,13 @@ import {
   type NextAuthOptions,
 } from "next-auth";
 import { type Adapter } from "next-auth/adapters";
-import DiscordProvider from "next-auth/providers/discord";
+import GoogleProvider from "next-auth/providers/google";
+import CredentialsProvider from "next-auth/providers/credentials";
+import bcrypt from "bcrypt";
 
 import { env } from "~/env";
 import { db } from "~/server/db";
+import { api } from "~/trpc/server";
 
 /**
  * Module augmentation for `next-auth` types. Allows us to add custom properties to the `session`
@@ -38,20 +41,80 @@ declare module "next-auth" {
  */
 export const authOptions: NextAuthOptions = {
   callbacks: {
-    session: ({ session, user }) => ({
-      ...session,
-      user: {
-        ...session.user,
-        id: user.id,
-      },
-    }),
+    session: ({ session, token, user }) => {
+      console.log(session);
+      console.log(user);
+      console.log(token);
+
+      return {
+        ...session,
+        user: {
+          ...session.user,
+          id: user.id,
+        },
+      };
+    },
+    // jwt: async ({ token, user }) => {
+    //   console.log("jU: ", user);
+    //   console.log("jT: ", token);
+    //   if (user) {
+    //     token.id = user.id;
+    //     token.email = user.email;
+    //   }
+
+    //   return token;
+    // },
   },
   adapter: PrismaAdapter(db) as Adapter,
+  session: {
+    maxAge: 60*60,
+    updateAge: 10,
+  },
+  // jwt: {
+  //   maxAge: 60, // 1 day
+  // },
   providers: [
-    DiscordProvider({
-      clientId: env.DISCORD_CLIENT_ID,
-      clientSecret: env.DISCORD_CLIENT_SECRET,
+    GoogleProvider({
+      clientId: env.GOOGLE_ID,
+      clientSecret: env.GOOGLE_SECRET,
+      authorization: {
+        params: {
+          // prompt: "consent",
+          // access_type: "offline",
+          // response_type: "code",
+        },
+      },
     }),
+    CredentialsProvider({
+      name: "Credentials",
+      credentials: {
+        email: {
+          label: "Email",
+          type: "email",
+          placeholder: "example@gmail.com",
+        },
+        password: { label: "Password", type: "password" },
+      },
+      async authorize(credentials) {
+        // Add logic to verify credentials here
+        if (!credentials) return null;
+        const { email, password } = credentials;
+        // Fetch user and password hash from your database
+        const user = await db.user.findUnique({
+          where: {
+            email,
+            password,
+          },
+        });
+        // Example: const user = await getUserByEmail(email)
+        if (user && bcrypt.compareSync(password, user.password || "")) {
+          return { id: user.id, name: user.name, email: user.email };
+        } else {
+          throw new Error("Invalid credentials");
+        }
+      },
+    }),
+
     /**
      * ...add more providers here.
      *
